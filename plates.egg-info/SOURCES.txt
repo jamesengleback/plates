@@ -1,0 +1,5 @@
+setup.py
+plates.egg-info/PKG-INFO
+plates.egg-info/SOURCES.txt
+plates.egg-info/dependency_links.txt
+plates.egg-info/top_level.txt
