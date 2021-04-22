@@ -11,7 +11,10 @@ def r_squared(yi,yj):
 def MichaelisMenten(x,y):
     y = y.replace(np.inf, 0) # error handling
     mm = lambda x, km, vmax, c : ((x * vmax) / (km + x)) + c
-    (km, vmax, c), covariance = curve_fit(mm, x, y, bounds=((0, 0,0),(np.inf, np.inf, np.inf)))
+    try:
+        (km, vmax, c), covariance = curve_fit(mm, x, y, bounds=((0, 0,0),(np.inf, np.inf, np.inf)))
+    except RuntimeError:
+        km, vmax, c = np.inf, np.inf, np.inf
     
     yh = mm(x, km, vmax, c)
     rsq = r_squared(y, yh)

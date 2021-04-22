@@ -3,14 +3,15 @@ import matplotlib.pyplot as plt
 import plates
 
 def testPlate():
-    plate = plates.Plate('dm-d1,2.CSV')
+    plate = plates.Plate('data/dm-d1,2.CSV')
     print(plate.meta)
     print(plate.df)
     print(plate.row('A'))
     print(plate.col(1))
 
+
 def testUv384():
-    plate = plates.UV384m1('dm-d1,2.CSV')
+    plate = plates.UV384m1('data/dm-d1,2.CSV', smiles = ['c1ccccc1'] * 24)
     concs = np.linspace(0,500,8)
     print(plate.blocks)
     data = plate.block(1)
@@ -38,10 +39,33 @@ def testUv384():
     df = plates.reportPlate(plate, 'report-test')
     print(df)
 
+def test_ascii():
+    plate = plates.UV384m2('data/3march-echo-wt-assay-ascii.csv', parser = 'ascii')
+    data = plate.block(1)
+    print(data)
+
+def test_plate_blocks():
+    m1 = plates.UV384m1('data/dm-d1,2.CSV')
+    m2_ascii = plates.UV384m2('data/3march-echo-wt-assay-ascii.csv', parser = 'ascii')
+
+    m3 = plates.UV384m3('data/3march-echo-wt-assay-ascii.csv', parser = 'ascii')
+    print(m1.block(1))
+    print(m2_ascii.block(1))
+
+def test_report():
+    m1 = plates.UV384m1('data/dm-d1,2.CSV')
+    m2= plates.UV384m2('data/3march-echo-wt-assay-ascii.csv', parser = 'ascii')
+
+    m3 = plates.UV384m3('data/3march-echo-wt-assay-ascii.csv', parser = 'ascii')
+    m3.report(controlPlate=m2)
 
 
 def main():
     testPlate()
-    testUv384()
+    #testUv384()
+    #test_ascii()
+    #test_plate_blocks()
+    #test_report()
+
 if __name__ == '__main__':
     main()
