@@ -12,11 +12,12 @@ def MichaelisMenten(x,y):
     y = y.replace(np.inf, 0) # error handling
     mm = lambda x, km, vmax, c : ((x * vmax) / (km + x)) + c
     try:
-        (km, vmax, c), covariance = curve_fit(mm, x, y, bounds=((0, 0,0),(np.inf, np.inf, np.inf)))
+        (km, vmax, c), covariance = curve_fit(mm, x, y, 
+                bounds=((0, 0,0),(1e2,0.2,1)))
     except RuntimeError:
         km, vmax, c = np.inf, np.inf, np.inf
     
     yh = mm(x, km, vmax, c)
     rsq = r_squared(y, yh)
-    return km, vmax, c, rsq
+    return {'km':km, 'vmax':vmax, 'c':c, 'rsq':rsq}
 

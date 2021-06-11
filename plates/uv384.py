@@ -7,17 +7,56 @@ import pandas as pd
 from scipy.ndimage import gaussian_filter1d
 from tqdm import  tqdm
 
-import plates
+import plates # ???
+
+class Block:
+    def __init__(self, data, control = None, concs = None, smiles = None):
+        self.data = data
+        self.control = control
+        self.concs = concs
+        self.smiles = smiles
+    @property
+    def df(self):
+        return self.data
+    @property
+    def ctrl(self):
+        return self.control
+    @property
+    def norm(self):
+        df = self.df
+        if self.control is not None:
+            ctrl = self.control 
+            df = df.sub(ctrl) # issue - crtl.shape != df.shape sometimes
+            df = df.dropna(axis=1)
+        df = df.sub(df.iloc[:,-1], axis=0) # anchor at 800 nm
+        return df
+    @property
+    def diff(self):
+        norm = self.norm
+        return norm.sub(norm.iloc[0,:])
+    @property
+    def response(self):
+        diff = self.diff
+        response = diff.loc[:,390].abs() + diff.loc[:,420].abs()
+        if self.concs is not None:
+            assert len(self.concs) == len(response)
+            response.index = self.concs
+        return response
+    @property
+    def mm(self):
+        assert self.concs is not None, 'Need some concentrations bud!'
+        response = self.response
+        return plates.analysis.MichaelisMenten(response, pd.Series(response.index))
+
+    def report(self):
+        pass
 
 
 
 class UV384(plates.Plate):
     def __init__(self, path, name = None, concs = None, smiles = None, names = None, parser = None):
         super().__init__(path, name, parser)
-        if concs is None:
-            self.concs = np.array(range(8))
-        else:
-            self.concs = concs 
+        self.concs = concs 
         if smiles is None:
             self.smiles = [None] * 24
         else:
@@ -26,43 +65,65 @@ class UV384(plates.Plate):
             self.names = range(24)
         else:
             self.names = names
+        self.control = None
+    @property
+    def blocknums(self):
+        pass
+    @property
+    def blocks(self):
+        if self.blocknums is not None:
+            return [Block(self.locblock(i), 
+                        concs = self.concs,
+                        smiles = j) for i, j in zip(self.blocknums, self.smiles)]
+    def locblock(self, num):
+        pass
+
+    def block(self, n, smiles = None):
+        if smiles is None:
+            if self.smiles is not None:
+                smiles = self.smiles[n]
+            else:
+                smiles = None
+        if self.control is not None:
+            return Block(data = self.locblock(n),
+                        control = self.control.locblock(n), 
+                        concs = self.concs,
+                        smiles = smiles)
+        else:
+            return Block(self.locblock(n), 
+                    concs = self.concs,
+                        smiles = smiles)
 
 class UV384m1(UV384):
     # hand assay v1 (controls in each plate) plate obj
     # each col is 1 compound and contains a control in every other well
     def __init__(self, path, name = None, concs = None, smiles = None, names = None, parser = None):
         super().__init__(path, name, concs, smiles, names, parser )
+        # this is getting confusing
     @property
-    def blocks(self):
+    def blocknums(self):
         return range(1, len(self.df) // 16)
 
-    def block(self, num):
+    def locblock(self, num):
         col = self.col(num)
         return col[::2], col[1::2] # samples, controls
-
-    def report(self, save_dir = None, concs = None, smiles = None, names = None):
-        if concs is None:
-            concs = np.array(range(1,9))
+    @property
+    def blocks(self):
+        if self.blocknums is not None:
+            return [self.block(i, 
+                        smiles = j) for i, j in zip(self.blocknums, self.smiles)]
+    def block(self, n, smiles = None):
         if smiles is None:
-            smiles = [None for i in range(len(self.blocks))]
-        if names is None:
-            names = [None for i in range(len(self.blocks))]
-        if save_dir is None:
-            save_dir = f"{os.path.basename(self.path)}-report"
-        os.makedirs(save_dir, exist_ok=True)
-        dfs = []
-        for i, j in tqdm(enumerate(self.blocks), total = len(self.blocks)):
-            samples, controls = self.block(j)
-            x = plates.reports.report(samples = samples, 
-                    controls = controls, 
-                    concs = concs, 
-                    save_path = os.path.join(save_dir, f'{i}.png'), 
-                    smiles = smiles[i],
-                    names = names)
-            dfs.append(x)
-        report = pd.concat(dfs, axis = 1, join='inner')
-        report.to_csv(os.path.join(save_dir, 'metrics.csv'))
-        return report
+            if self.smiles is not None:
+                smiles = self.smiles[n]
+            else:
+                smiles = None
+        data, control = self.locblock(n)
+        print(data)
+        return Block(data = data,
+                    control = control, 
+                    concs = self.concs,
+                    smiles = smiles)
 
 class UV384m2(UV384):
     # hand assay v2 (controls in seperate plate) plate obj
@@ -70,10 +131,10 @@ class UV384m2(UV384):
     def __init__(self, path, name = None, concs = None, smiles = None, names = None, parser = None):
         super().__init__(path, name, concs, smiles, names, parser )
     @property
-    def blocks(self):
+    def blocknums(self):
         return range(1, (len(self.df) // 8) + 1)
 
-    def block(self, num):
+    def locblock(self, num):
         col = (num + 1) // 2 
         assert col < 25
         if num % 2 == 1:
@@ -82,34 +143,6 @@ class UV384m2(UV384):
             rows = ascii_uppercase[1:16:2]
         wells = [f'{i}{col}' for i in rows]
         return self.df.loc[wells,:]
-
-    def report(self, controlPlate = None, save_dir = None, concs = None, smiles = None, names = None):
-        if concs is None:
-            concs = np.array(range(1,9))
-        if smiles is None:
-            smiles = [None for i in range(len(self.blocks))]
-        if names is None:
-            names = [None for i in range(len(self.blocks))]
-        if save_dir is None:
-            save_dir = f"{os.path.basename(self.path).split('.')[0]}-report"
-
-        os.makedirs(save_dir, exist_ok=True)
-        dfs = []
-        for i, (j, k) in tqdm(enumerate(zip(self.blocks, smiles)), total = len(self.blocks)):
-            samples = self.block(j)
-            if controlPlate is None:
-                controls = None
-            else:
-                controls = controlPlate.block(j)
-            x = plates.reports.report(samples = samples, 
-                    controls = controls,
-                    concs = concs, 
-                    save_path = os.path.join(save_dir, f'{j}.png'), 
-                    smiles = k)
-            dfs.append(x)
-        report = pd.concat(dfs, axis = 1, join='inner')
-        report.to_csv(os.path.join(save_dir, 'metrics.csv'))
-        return report
     
 
 class UV384m3(UV384m2):
@@ -120,48 +153,35 @@ class UV384m3(UV384m2):
     def __init__(self, path, name = None, concs = None, smiles = None, names = None, parser = None):
         super().__init__(path, name, concs, smiles, names, parser)
     @property
-    def blocks(self):
+    def blocknums(self):
         return list(range(1, len(self.df) // 8))
-    def block(self, num):
+    def locblock(self, num):
         # first 8 or last 8
         col = (num + 1) // 2 
         if num % 2 == 1:
-            rows = ascii_uppercase[8:16]
-        else:
             rows = ascii_uppercase[:8]
+        else:
+            rows = ascii_uppercase[8:16]
         wells = [f'{i}{col}' for i in rows]
         return self.df.loc[wells,:]
 
-class transforms:
-    def smooth(data):
-        normData = gaussian_filter1d(data, 1, axis = 1) # gaussian smoothing
-        return pd.DataFrame(normData, index = data.index, columns = data.columns)
+class UV384m4(UV384m3):
+    # sideways plocks!
+    def __init__(self, path, name = None, concs = None, smiles = None, names = None, parser = None, control = None):
+        super().__init__(path, name, concs, smiles, names, parser)
+        self.control = control
+    def locblock(self, num):
+        # first 8 or last 8
+        row = ascii_uppercase[(num - 1)  // 3 ]
+        if num % 3 == 1:
+            cols = range(1,9)
+        elif num % 3 == 2:
+            cols = range(9,17)
+        elif num % 3 == 0:
+            cols = range(17,25)
+        wells = [f'{row}{i}' for i in cols]
+        return self.df.loc[wells,:]
 
-    def normalize(samples, controls = None, smooth = False):
-        # samples and controls
-        if smooth:
-            samples = transforms.smooth(samples.astype(float))
-            if controls is not None:
-                controls = transforms.smooth(controls.astype(float))
-        
-        # normalize at 800 nm
-        samples = samples.subtract(samples[800], axis = 0).reset_index(drop=True)
-
-        # subtract controls
-        if controls is not None:
-            controls = controls.subtract(controls[800], axis = 0).reset_index(drop=True)
-            samples = samples.subtract(controls, axis = 0)
-
-        # scale at 405 nm inflection point
-        inflection = samples.loc[:,405]
-        scaling = 1 / inflection
-        return samples.multiply(scaling, axis = 0)
-
-    def difference(data):
-        # normalized block
-        return data.subtract(data.loc[data.index[0],:], axis = 1)
-
-    def response(data):
-        # difference block
-        return abs(data.loc[:,420]) + abs(data.loc[:, 390])
-
+def smooth(data):
+    normData = gaussian_filter1d(data, 1, axis = 1) # gaussian smoothing
+    return pd.DataFrame(normData, index = data.index, columns = data.columns)

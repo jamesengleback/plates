@@ -1,9 +1,8 @@
 .gitignore
 setup.py
 plates/__init__.py
-plates/anal.py
+plates/analysis.py
 plates/plates.py
-plates/plot.py
 plates/reports.py
 plates/uv384.py
 plates.egg-info/PKG-INFO
