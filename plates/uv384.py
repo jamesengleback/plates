@@ -2,33 +2,61 @@ import sys
 import os
 import re 
 from string import ascii_uppercase
+import warnings
 import numpy as np
 import pandas as pd 
 from scipy.ndimage import gaussian_filter1d
+from scipy.interpolate import interp1d
 from tqdm import  tqdm
 
 import plates # ???
 
 class Block:
-    def __init__(self, data, control = None, concs = None, smiles = None):
+    def __init__(self, data, control = None, test_concs = None, ctrl_concs = None, smiles = None, smooth = False, norm410 = False):
+
         self.data = data
         self.control = control
-        self.concs = concs
+        self.test_concs = test_concs
+        self.ctrl_concs = ctrl_concs
         self.smiles = smiles
+        self.smooth = smooth
+        self.norm410 = norm410
+        self.wells = self.data.index.tolist()
     @property
     def df(self):
-        return self.data
-    @property
-    def ctrl(self):
-        return self.control
+        if self.control is None:
+            return self.data
+        else:
+            return self.data, self.control
     @property
     def norm(self):
-        df = self.df
-        if self.control is not None:
-            ctrl = self.control 
-            df = df.sub(ctrl) # issue - crtl.shape != df.shape sometimes
-            df = df.dropna(axis=1)
+        df = self.data
         df = df.sub(df.iloc[:,-1], axis=0) # anchor at 800 nm
+        if self.smooth:
+            df = smooth(df)
+
+        if self.control is not None:
+            # build mask
+            ctrl = self.control
+            ctrl = ctrl.sub(ctrl.iloc[:,-1], axis=0)
+            if self.smooth:
+                ctrl = smooth(ctrl)
+
+            #missing = [j != i for i,(j,k) in enumerate(zip(self.ctrl_concs, self.test_concs))]
+            #if sum(missing) > 0:
+            #    interp = interp1d(self.ctrl_concs, ctrl.T, kind = 'linear', fill_value='extrapolate')
+            #    if not interp.bounds_error:
+            #        ctrl_interp = pd.concat([pd.Series(interp(i), name = k, index = ctrl.columns)\
+            #                if j else ctrl.loc[k,:] for i,j,k in zip(self.test_concs, missing, ctrl.index)],
+            #                axis=1).T
+            #        if sum(ctrl_interp.isna()) == 0:
+            #            ctrl = ctrl_interp
+
+            df = df.sub(ctrl)
+            df = df.dropna(axis=1)
+        if self.norm410:
+            # note - in this case, vmax is only comparable within runs that also norm410
+            df = df.div(df.loc[:,410], axis=0) * 0.3 # so it fits in the axes
         return df
     @property
     def diff(self):
@@ -38,103 +66,76 @@ class Block:
     def response(self):
         diff = self.diff
         response = diff.loc[:,390].abs() + diff.loc[:,420].abs()
-        if self.concs is not None:
-            assert len(self.concs) == len(response)
-            response.index = self.concs
+        if self.test_concs is not None:
+            assert len(self.test_concs) == len(response)
+            #if len(set(self.test_concs)) > 1: # in case they're all the same, then they can still be plotted
+            response.index = self.test_concs
         return response
     @property
     def mm(self):
-        assert self.concs is not None, 'Need some concentrations bud!'
+        assert self.test_concs is not None, 'Need some concentrations bud!'
         response = self.response
-        return plates.analysis.MichaelisMenten(response, pd.Series(response.index))
+        # index makes problems in mm
+        return plates.analysis.MichaelisMenten(self.test_concs.reset_index(drop=True), 
+                    response.reset_index(drop=True))
+    def __repr__(self):
+        return f'\n{"-"*10}\nblock num: {self.block_num}\nplate: {self.plate_name}\npath:{self.plate_path}\nwells: {self.wells}\nsmiles: {self.smiles}\n{"-"*10}'
 
     def report(self):
         pass
 
+class BlocksConatiner:
+    def __init__(self, blocks):
+        self.blocks = blocks
+    def __len__(self):
+        return len(self.blocks)
+    def __getitem__(self, i):
+        return self.blocks[i]
+    def __repr__(self):
+        return f'number of blocks: {len(self)}\nplate: {self.plate}'
+    @property
+    def plate(self):
+        return set([i.plate_name for i in self.blocks])
 
 
 class UV384(plates.Plate):
-    def __init__(self, path, name = None, concs = None, smiles = None, names = None, parser = None):
+    def __init__(self, path, name = None, parser = None):
         super().__init__(path, name, parser)
-        self.concs = concs 
-        if smiles is None:
-            self.smiles = [None] * 24
-        else:
-            self.smiles = smiles
-        if names is None:
-            self.names = range(24)
-        else:
-            self.names = names
-        self.control = None
     @property
     def blocknums(self):
         pass
+    def block(self, n):
+        # just return df slice
+        pass
     @property
     def blocks(self):
-        if self.blocknums is not None:
-            return [Block(self.locblock(i), 
-                        concs = self.concs,
-                        smiles = j) for i, j in zip(self.blocknums, self.smiles)]
-    def locblock(self, num):
-        pass
-
-    def block(self, n, smiles = None):
-        if smiles is None:
-            if self.smiles is not None:
-                smiles = self.smiles[n]
-            else:
-                smiles = None
-        if self.control is not None:
-            return Block(data = self.locblock(n),
-                        control = self.control.locblock(n), 
-                        concs = self.concs,
-                        smiles = smiles)
-        else:
-            return Block(self.locblock(n), 
-                    concs = self.concs,
-                        smiles = smiles)
+        return [self.block(i) for i in self.blocknums]
 
 class UV384m1(UV384):
     # hand assay v1 (controls in each plate) plate obj
     # each col is 1 compound and contains a control in every other well
-    def __init__(self, path, name = None, concs = None, smiles = None, names = None, parser = None):
-        super().__init__(path, name, concs, smiles, names, parser )
-        # this is getting confusing
+    def __init__(self, path, name = None, parser = None):
+        super().__init__(path, name, parser )
     @property
     def blocknums(self):
         return range(1, len(self.df) // 16)
-
-    def locblock(self, num):
+    def block(self, num):
         col = self.col(num)
         return col[::2], col[1::2] # samples, controls
-    @property
-    def blocks(self):
-        if self.blocknums is not None:
-            return [self.block(i, 
-                        smiles = j) for i, j in zip(self.blocknums, self.smiles)]
-    def block(self, n, smiles = None):
-        if smiles is None:
-            if self.smiles is not None:
-                smiles = self.smiles[n]
-            else:
-                smiles = None
-        data, control = self.locblock(n)
-        print(data)
-        return Block(data = data,
-                    control = control, 
-                    concs = self.concs,
-                    smiles = smiles)
+               
+               
+               
 
 class UV384m2(UV384):
     # hand assay v2 (controls in seperate plate) plate obj
     # compounds in all wells, each col: odd = block.1 even = block.2
-    def __init__(self, path, name = None, concs = None, smiles = None, names = None, parser = None):
-        super().__init__(path, name, concs, smiles, names, parser )
+    def __init__(self, path, name = None, parser = None):
+        super().__init__(path, name, parser )
     @property
     def blocknums(self):
         return range(1, (len(self.df) // 8) + 1)
 
-    def locblock(self, num):
+    def block(self, num):
         col = (num + 1) // 2 
         assert col < 25
         if num % 2 == 1:
@@ -150,12 +151,12 @@ class UV384m3(UV384m2):
     # no controls, they're in a seperate plate
     # each column has two blocks 
     # one in the first 8 rows and the other in the next 8
-    def __init__(self, path, name = None, concs = None, smiles = None, names = None, parser = None):
-        super().__init__(path, name, concs, smiles, names, parser)
+    def __init__(self, path, name = None, parser = None):
+        super().__init__(path, name, parser)
     @property
     def blocknums(self):
         return list(range(1, len(self.df) // 8))
-    def locblock(self, num):
+    def block(self, num):
         # first 8 or last 8
         col = (num + 1) // 2 
         if num % 2 == 1:
@@ -167,10 +168,9 @@ class UV384m3(UV384m2):
 
 class UV384m4(UV384m3):
     # sideways plocks!
-    def __init__(self, path, name = None, concs = None, smiles = None, names = None, parser = None, control = None):
-        super().__init__(path, name, concs, smiles, names, parser)
-        self.control = control
-    def locblock(self, num):
+    def __init__(self, path, name = None, parser = None):
+        super().__init__(path, name, parser)
+    def block(self, num):
         # first 8 or last 8
         row = ascii_uppercase[(num - 1)  // 3 ]
         if num % 3 == 1:
@@ -183,5 +183,5 @@ class UV384m4(UV384m3):
         return self.df.loc[wells,:]
 
 def smooth(data):
-    normData = gaussian_filter1d(data, 1, axis = 1) # gaussian smoothing
+    normData = gaussian_filter1d(data, 3, axis = 1) # gaussian smoothing
     return pd.DataFrame(normData, index = data.index, columns = data.columns)

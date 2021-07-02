@@ -57,6 +57,7 @@ class Plate:
         df.index = df.iloc[:,0] # wells
         df.drop(['Unnamed: 0','Wavelength [nm]'],axis=1, inplace=True)
         df.dropna(axis=1, inplace=True)
+        df=df.replace('overflow', 3.5)
         df.columns = df.columns.astype(int) # wavelengths
         return df.astype(float)
 

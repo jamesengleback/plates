@@ -9,15 +9,16 @@ def r_squared(yi,yj):
     return 1 - (sum_sq_residual / sum_sq_total)
 
 def MichaelisMenten(x,y):
-    y = y.replace(np.inf, 0) # error handling
-    mm = lambda x, km, vmax, c : ((x * vmax) / (km + x)) + c
-    try:
-        (km, vmax, c), covariance = curve_fit(mm, x, y, 
-                bounds=((0, 0,0),(1e2,0.2,1)))
-    except RuntimeError:
-        km, vmax, c = np.inf, np.inf, np.inf
+    y = y.replace(np.inf, 0) # error handling - pandas
     
-    yh = mm(x, km, vmax, c)
+    mm = lambda x, km, vmax : ((x * vmax) / (km + x)) 
+    try:
+        (km, vmax), covariance = curve_fit(mm, x, y, 
+                bounds=((0, 0),(1e2,0.2)))
+    except RuntimeError:
+        km, vmax = np.inf, np.inf
+    
+    yh = mm(x, km, vmax)
     rsq = r_squared(y, yh)
-    return {'km':km, 'vmax':vmax, 'c':c, 'rsq':rsq}
+    return {'km':km, 'vmax':vmax, 'rsq':rsq}
 
